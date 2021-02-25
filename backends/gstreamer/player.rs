@@ -481,6 +481,10 @@ impl GStreamerPlayer {
                 .expect("playbin doesn't have expected 'audio-sink' property");
 
             let audio_sink = audio_sink.dynamic_cast::<gst_app::AppSink>().unwrap();
+            audio_sink.set_caps(Some(&gst::Caps::new_simple(
+                "audio/x-raw",
+                &[("channels", &(1i32))],
+            )));
             let audio_renderer_ = audio_renderer.clone();
             audio_sink.set_callbacks(
                 gst_app::AppSinkCallbacks::new()
