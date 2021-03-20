@@ -6,12 +6,12 @@ use servo_media::audio::context::{AudioContextOptions, RealTimeAudioContextOptio
 use servo_media::audio::decoder::AudioDecoderCallbacks;
 use servo_media::audio::node::{AudioNodeInit, AudioNodeMessage, AudioScheduledSourceNodeMessage};
 use servo_media::{ClientContextId, ServoMedia};
-use std::io::Read;
+use std::env;
+use std::fs::File;
 use std::path::Path;
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
-use std::{collections::VecDeque, env};
-use std::{fs::File, iter::FromIterator};
+use std::{convert::TryInto, io::Read};
 use std::{thread, time};
 
 fn run_example(servo_media: Arc<ServoMedia>) {
@@ -21,7 +21,9 @@ fn run_example(servo_media: Arc<ServoMedia>) {
         &ClientContextId::build(1, 1),
         AudioContextOptions::RealTimeAudioContext(options),
     );
+
     let context = context.lock().unwrap();
+    let _ = context.resume();
     let args: Vec<_> = env::args().collect();
     let default = "./examples/resources/viper_cut.ogg";
     let filename: &str = if args.len() == 2 {
@@ -34,10 +36,19 @@ fn run_example(servo_media: Arc<ServoMedia>) {
     let mut file = File::open(filename).unwrap();
     let mut bytes = vec![];
     file.read_to_end(&mut bytes).unwrap();
-    let decoded_audio: Arc<Mutex<Vec<Vec<f32>>>> = Arc::new(Mutex::new(Vec::new()));
-    let decoded_audio_ = decoded_audio.clone();
-    let decoded_audio__ = decoded_audio.clone();
+    let buffer_source = context.create_node(
+        AudioNodeInit::AudioBufferSourceNode(Default::default()),
+        Default::default(),
+    );
+    let dest = context.dest_node();
+    context.connect_ports(buffer_source.output(0), dest.input(0));
+
     let (sender, receiver) = mpsc::channel();
+    let (data_sender, data_receiver) = mpsc::channel::<(Box<[f32]>, u32)>();
+    let mut_sender = Mutex::new(data_sender);
+
+    let mut decoded_audio = vec![<Vec<f32>>::new()];
+
     let callbacks = AudioDecoderCallbacks::new()
         .eos(move || {
             sender.send(()).unwrap();
@@ -46,47 +57,62 @@ fn run_example(servo_media: Arc<ServoMedia>) {
             eprintln!("Error decoding audio {:?}", e);
         })
         .progress(move |buffer, channel| {
-            let mut decoded_audio = decoded_audio_.lock().unwrap();
-            decoded_audio[(channel - 1) as usize].extend_from_slice((*buffer).as_ref());
+            let r = (*buffer).as_ref().try_into().unwrap();
+            mut_sender.lock().unwrap().send((r, channel)).unwrap();
         })
         .ready(move |channels| {
             println!("There are {:?} audio channels", channels);
-            decoded_audio__
-                .lock()
-                .unwrap()
-                .resize(channels as usize, Vec::new());
+            decoded_audio.resize(channels as usize, Vec::new());
         })
         .build();
     context.decode_audio_data(bytes.to_vec(), callbacks);
     println!("Decoding audio");
-    receiver.recv().unwrap();
-    println!("Audio decoded");
-    let buffer_source = context.create_node(
-        AudioNodeInit::AudioBufferSourceNode(Default::default()),
-        Default::default(),
-    );
-    let dest = context.dest_node();
-    context.connect_ports(buffer_source.output(0), dest.input(0));
     context.message_node(
         buffer_source,
         AudioNodeMessage::AudioScheduledSourceNode(AudioScheduledSourceNodeMessage::Start(0.)),
     );
-    context.message_node(
-        buffer_source,
-        AudioNodeMessage::AudioBufferSourceNode(AudioBufferSourceNodeMessage::SetBuffer(Some(
-            AudioBuffer::from_buffers(
-                decoded_audio
-                    .lock()
-                    .unwrap()
-                    .iter()
-                    .map(|a| VecDeque::from_iter(a.to_owned()))
-                    .collect::<Vec<_>>(),
-                sample_rate,
-            ),
-        ))),
-    );
-    let _ = context.resume();
-    thread::sleep(time::Duration::from_millis(5000));
+
+    let mut set = false;
+    let mut decoded_audio = vec![<Vec<f32>>::new(); 2];
+    'outer: while let Ok((data, channel)) = data_receiver.recv() {
+        let chans = decoded_audio.len();
+        if chans == 0 || data.len() == 0 {
+            continue;
+        }
+        decoded_audio[(channel - 1) as usize].extend_from_slice((*data).as_ref());
+
+        for chan in &decoded_audio {
+            if decoded_audio[0].len() != chan.len() {
+                continue 'outer;
+            }
+        }
+
+        if !set {
+            context.message_node(
+                buffer_source,
+                AudioNodeMessage::AudioBufferSourceNode(AudioBufferSourceNodeMessage::SetBuffer(
+                    Some(AudioBuffer::from_buffers(
+                        decoded_audio.to_vec(),
+                        sample_rate,
+                    )),
+                )),
+            );
+            set = true;
+        } else {
+            context.message_node(
+                buffer_source,
+                AudioNodeMessage::AudioBufferSourceNode(AudioBufferSourceNodeMessage::PushBuffer(
+                    decoded_audio.to_vec(),
+                )),
+            );
+        }
+
+        decoded_audio = vec![<Vec<f32>>::new(); chans];
+    }
+    receiver.recv().unwrap();
+    println!("Audio decoded");
+
+    thread::sleep(time::Duration::from_millis(6000));
     let _ = context.close();
 }
 

@@ -1,4 +1,4 @@
-use std::{collections::VecDeque, usize};
+use std::{collections::VecDeque, iter::FromIterator, usize};
 
 use block::{Block, Chunk, Tick, FRAMES_PER_BLOCK};
 use node::{AudioNodeEngine, AudioScheduledSourceNodeMessage, BlockInfo, OnEndedCallback};
@@ -10,6 +10,7 @@ use param::{Param, ParamType};
 pub enum AudioBufferSourceNodeMessage {
     /// Set the data block holding the audio sample data to be played.
     SetBuffer(Option<AudioBuffer>),
+    PushBuffer(Vec<Vec<f32>>),
     /// Set loop parameter.
     SetLoopEnabled(bool),
     /// Set loop parameter.
@@ -123,6 +124,11 @@ impl AudioBufferSourceNode {
         match message {
             AudioBufferSourceNodeMessage::SetBuffer(buffer) => {
                 self.buffer = buffer;
+            }
+            AudioBufferSourceNodeMessage::PushBuffer(buffer) => {
+                if let Some(cur_buf) = self.buffer.as_mut() {
+                    cur_buf.push(buffer);
+                }
             }
             // XXX(collares): To fully support dynamically updating loop bounds,
             // Must truncate self.buffer_pos if it is now outside the loop.
@@ -264,7 +270,7 @@ impl AudioNodeEngine for AudioBufferSourceNode {
             && buffer_offset_per_tick == 1.
             && self.buffer_pos.trunc() == self.buffer_pos
             && self.buffer_pos + (FRAMES_PER_BLOCK.0 as f64) <= actual_loop_end
-            && FRAMES_PER_BLOCK.0 as f64 <= self.buffer_duration
+            && FRAMES_PER_BLOCK.0 as f64 <= buffer.remaining() as f64
         {
             let mut block = Block::empty();
             //let pos = self.buffer_pos as usize;
@@ -306,13 +312,16 @@ impl AudioNodeEngine for AudioBufferSourceNode {
                         } else if !forward && pos < actual_loop_start {
                             pos += actual_loop_end - actual_loop_start;
                         }
-                    } else if pos < 0. || pos >= buffer.len() as f64 {
+                    } else if pos < 0. || pos >= buffer.remaining() as f64 {
                         break;
                     }
 
-                    *sample = buffer.interpolate(chan, pos);
+                    *sample = buffer.interpolate(chan, pos - buffer.consumed as f64);
                     pos += buffer_offset_per_tick;
                     duration -= buffer_offset_per_tick.abs();
+                    if chan == buffer.chans() - 1 {
+                        buffer.drain(1);
+                    }
                 }
 
                 // This is the last channel, update parameters.
@@ -354,6 +363,8 @@ pub struct AudioBuffer {
     pub buffers: Vec<VecDeque<f32>>,
     pub sample_rate: f32,
     pub start_position: usize,
+    pub size: usize,
+    pub consumed: usize,
 }
 
 impl AudioBuffer {
@@ -366,33 +377,40 @@ impl AudioBuffer {
             buffers,
             sample_rate,
             start_position: 0,
+            size: len,
+            consumed: 0,
         }
     }
 
-    pub fn from_buffers(buffers: Vec<VecDeque<f32>>, sample_rate: f32) -> Self {
+    pub fn from_buffers(buffers: Vec<Vec<f32>>, sample_rate: f32) -> Self {
         for buf in &buffers {
             assert_eq!(buf.len(), buffers[0].len())
         }
-
+        let size = buffers[0].len();
         Self {
-            buffers,
+            buffers: Self::to_queue(buffers),
             sample_rate,
             start_position: 0,
+            size,
+            consumed: 0,
         }
     }
 
-    pub fn from_buffer(buffer: VecDeque<f32>, sample_rate: f32) -> Self {
+    pub fn from_buffer(buffer: Vec<f32>, sample_rate: f32) -> Self {
         AudioBuffer::from_buffers(vec![buffer], sample_rate)
     }
 
-    pub fn push(&mut self, buffers: Vec<VecDeque<f32>>) {
+    pub fn push(&mut self, buffers: Vec<Vec<f32>>) {
         assert_eq!(self.buffers.len(), buffers.len());
-        for (i, mut buf) in buffers.into_iter().enumerate() {
+        self.size += buffers[0].len();
+        let queue = Self::to_queue(buffers);
+        for (i, mut buf) in queue.into_iter().enumerate() {
             self.buffers[i].append(&mut buf);
         }
     }
 
     pub fn drain(&mut self, count: usize) -> Vec<Vec<f32>> {
+        self.consumed += count;
         self.buffers
             .iter_mut()
             .map(|b| b.drain(..count).collect::<Vec<_>>())
@@ -400,6 +418,10 @@ impl AudioBuffer {
     }
 
     pub fn len(&self) -> usize {
+        self.size
+    }
+
+    pub fn remaining(&self) -> usize {
         self.buffers[0].len()
     }
 
@@ -412,7 +434,7 @@ impl AudioBuffer {
     // https://ccrma.stanford.edu/~jos/resample/resample.pdf
     // There are Rust bindings: https://github.com/rust-av/speexdsp-rs
     pub fn interpolate(&self, chan: u8, pos: f64) -> f32 {
-        debug_assert!(pos >= 0. && pos < self.len() as f64);
+        debug_assert!(pos >= 0. && pos < self.remaining() as f64);
 
         let prev = pos.floor() as usize;
         let offset = pos - pos.floor();
@@ -434,7 +456,10 @@ impl AudioBuffer {
         }
     }
 
-    pub fn data_chan_mut(&mut self, chan: u8) -> &mut [f32] {
-        self.buffers[chan as usize].as_mut_slices().0
+    fn to_queue(buffers: Vec<Vec<f32>>) -> Vec<VecDeque<f32>> {
+        buffers
+            .into_iter()
+            .map(|b| VecDeque::from_iter(b))
+            .collect::<Vec<_>>()
     }
 }
