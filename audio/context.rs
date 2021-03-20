@@ -4,10 +4,10 @@ use node::{AudioNodeInit, AudioNodeMessage, ChannelInfo};
 use render_thread::AudioRenderThread;
 use render_thread::AudioRenderThreadMsg;
 use servo_media_traits::{BackendMsg, ClientContextId, MediaInstance};
-use std::cell::Cell;
 use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread::Builder;
+use std::{cell::Cell, sync::mpsc::Receiver};
 use AudioBackend;
 
 /// Describes the state of the audio context on the control thread.
@@ -262,7 +262,7 @@ impl AudioContext {
 
     /// Asynchronously decodes the audio file data contained in the given
     /// buffer.
-    pub fn decode_audio_data(&self, data: Vec<u8>, callbacks: AudioDecoderCallbacks) {
+    pub fn decode_audio_data(&self, callbacks: AudioDecoderCallbacks, receiver: Receiver<Vec<u8>>) {
         let mut options = AudioDecoderOptions::default();
         options.sample_rate = self.sample_rate;
         let make_decoder = self.make_decoder.clone();
@@ -271,7 +271,7 @@ impl AudioContext {
             .spawn(move || {
                 let audio_decoder = make_decoder();
 
-                audio_decoder.decode(data, callbacks, Some(options));
+                audio_decoder.decode(receiver, callbacks, Some(options));
             })
             .unwrap();
     }

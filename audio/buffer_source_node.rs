@@ -5,11 +5,13 @@ use node::{AudioNodeEngine, AudioScheduledSourceNodeMessage, BlockInfo, OnEndedC
 use node::{AudioNodeType, ChannelInfo, ShouldPlay};
 use param::{Param, ParamType};
 
+const BUFFER_SIZE: usize = 4096;
+
 /// Control messages directed to AudioBufferSourceNodes.
-#[derive(Debug, Clone)]
 pub enum AudioBufferSourceNodeMessage {
     /// Set the data block holding the audio sample data to be played.
     SetBuffer(Option<AudioBuffer>),
+    /// Push data onto the buffer. SetBuffer must be called first.
     PushBuffer(Vec<Vec<f32>>),
     /// Set loop parameter.
     SetLoopEnabled(bool),
@@ -19,6 +21,8 @@ pub enum AudioBufferSourceNodeMessage {
     SetLoopStart(f64),
     /// Set start parameters (when, offset, duration).
     SetStartParams(f64, Option<f64>, Option<f64>),
+    // Callback invoked when the queue is running out of data
+    SetNeedDataCallback(Box<dyn Fn(usize) + Send>),
 }
 
 /// This specifies options for constructing an AudioBufferSourceNode.
@@ -96,6 +100,7 @@ pub(crate) struct AudioBufferSourceNode {
     stop_at: Option<Tick>,
     /// The ended event callback.
     pub onended_callback: Option<OnEndedCallback>,
+    need_data_callback: Option<Box<dyn Fn(usize) + Send>>,
 }
 
 impl AudioBufferSourceNode {
@@ -117,6 +122,7 @@ impl AudioBufferSourceNode {
             start_when: 0.,
             stop_at: None,
             onended_callback: None,
+            need_data_callback: None,
         }
     }
 
@@ -144,6 +150,9 @@ impl AudioBufferSourceNode {
                 self.start_offset = offset;
                 self.start_duration = duration;
             }
+            AudioBufferSourceNodeMessage::SetNeedDataCallback(callback) => {
+                self.need_data_callback = Some(callback);
+            }
         }
     }
 }
@@ -161,6 +170,9 @@ impl AudioNodeEngine for AudioBufferSourceNode {
         debug_assert!(inputs.len() == 0);
 
         if self.buffer.is_none() {
+            if let Some(callback) = &self.need_data_callback {
+                callback(BUFFER_SIZE);
+            }
             inputs.blocks.push(Default::default());
             return inputs;
         }
@@ -174,6 +186,11 @@ impl AudioNodeEngine for AudioBufferSourceNode {
         };
 
         let buffer = self.buffer.as_mut().unwrap();
+        if buffer.remaining() < BUFFER_SIZE {
+            if let Some(callback) = &self.need_data_callback {
+                callback(BUFFER_SIZE);
+            }
+        }
 
         let (mut actual_loop_start, mut actual_loop_end) = (0., buffer.len() as f64);
         if self.loop_enabled {

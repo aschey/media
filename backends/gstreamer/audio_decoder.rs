@@ -5,9 +5,10 @@ use gst_app;
 use gst_audio;
 use servo_media_audio::decoder::{AudioDecoder, AudioDecoderCallbacks};
 use servo_media_audio::decoder::{AudioDecoderError, AudioDecoderOptions};
-use std::io::Cursor;
-use std::io::Read;
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{
+    mpsc::{self, Receiver},
+    Arc, Mutex,
+};
 
 pub struct GStreamerAudioDecoderProgress(gst::buffer::MappedBuffer<gst::buffer::Readable>);
 
@@ -28,7 +29,7 @@ impl GStreamerAudioDecoder {
 impl AudioDecoder for GStreamerAudioDecoder {
     fn decode(
         &self,
-        data: Vec<u8>,
+        data_receiver: Receiver<Vec<u8>>,
         callbacks: AudioDecoderCallbacks,
         options: Option<AudioDecoderOptions>,
     ) {
@@ -354,23 +355,11 @@ impl AudioDecoder for GStreamerAudioDecoder {
             return;
         }
 
-        let max_bytes = appsrc.get_max_bytes() as usize;
-        let data_len = data.len();
-        let mut reader = Cursor::new(data);
-        while (reader.position() as usize) < data_len {
-            let data_left = data_len - reader.position() as usize;
-            let buffer_size = if data_left < max_bytes {
-                data_left
-            } else {
-                max_bytes
-            };
-            let mut buffer = gst::Buffer::with_size(buffer_size).unwrap();
-            {
-                let buffer = buffer.get_mut().unwrap();
-                let mut map = buffer.map_writable().unwrap();
-                let mut buffer = map.as_mut_slice();
-                let _ = reader.read(&mut buffer);
+        while let Ok(data) = data_receiver.recv() {
+            if data.is_empty() {
+                break;
             }
+            let buffer = gst::Buffer::from_slice(data);
             let _ = appsrc.push_buffer(buffer);
         }
         let _ = appsrc.end_of_stream();

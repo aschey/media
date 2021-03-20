@@ -28,10 +28,10 @@ use servo_media_webrtc::{
     SessionDescription, WebRtcBackend, WebRtcController, WebRtcControllerBackend,
     WebRtcDataChannelResult, WebRtcResult, WebRtcSignaller,
 };
-use std::any::Any;
 use std::ops::Range;
 use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex};
+use std::{any::Any, sync::mpsc::Receiver};
 
 pub struct DummyBackend;
 
@@ -215,7 +215,13 @@ impl WebRtcBackend for DummyBackend {
 pub struct DummyAudioDecoder;
 
 impl AudioDecoder for DummyAudioDecoder {
-    fn decode(&self, _: Vec<u8>, _: AudioDecoderCallbacks, _: Option<AudioDecoderOptions>) {}
+    fn decode(
+        &self,
+        _: Receiver<Vec<u8>>,
+        _: AudioDecoderCallbacks,
+        _: Option<AudioDecoderOptions>,
+    ) {
+    }
 }
 
 pub struct DummySocket;

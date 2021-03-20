@@ -6,12 +6,12 @@ use servo_media::audio::context::{AudioContextOptions, RealTimeAudioContextOptio
 use servo_media::audio::decoder::AudioDecoderCallbacks;
 use servo_media::audio::node::{AudioNodeInit, AudioNodeMessage, AudioScheduledSourceNodeMessage};
 use servo_media::{ClientContextId, ServoMedia};
-use std::env;
 use std::fs::File;
 use std::path::Path;
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::{convert::TryInto, io::Read};
+use std::{env, io::BufReader};
 use std::{thread, time};
 
 fn run_example(servo_media: Arc<ServoMedia>) {
@@ -25,7 +25,7 @@ fn run_example(servo_media: Arc<ServoMedia>) {
     let context = context.lock().unwrap();
     let _ = context.resume();
     let args: Vec<_> = env::args().collect();
-    let default = "./examples/resources/viper_cut.ogg";
+    let default = "./examples/resources/viper_cut.ogg"; //"C:\\shared_files\\Music\\EDM Mixes\\April - 2013.mp3";
     let filename: &str = if args.len() == 2 {
         args[1].as_ref()
     } else if Path::new(default).exists() {
@@ -33,9 +33,7 @@ fn run_example(servo_media: Arc<ServoMedia>) {
     } else {
         panic!("Usage: cargo run --bin audio_decoder <file_path>")
     };
-    let mut file = File::open(filename).unwrap();
-    let mut bytes = vec![];
-    file.read_to_end(&mut bytes).unwrap();
+
     let buffer_source = context.create_node(
         AudioNodeInit::AudioBufferSourceNode(Default::default()),
         Default::default(),
@@ -44,10 +42,12 @@ fn run_example(servo_media: Arc<ServoMedia>) {
     context.connect_ports(buffer_source.output(0), dest.input(0));
 
     let (sender, receiver) = mpsc::channel();
+    let (chan_sender, chan_receiver) = mpsc::channel();
     let (data_sender, data_receiver) = mpsc::channel::<(Box<[f32]>, u32)>();
     let mut_sender = Mutex::new(data_sender);
 
-    let mut decoded_audio = vec![<Vec<f32>>::new()];
+    let file = File::open(filename).unwrap();
+    let reader = Mutex::new(BufReader::new(file));
 
     let callbacks = AudioDecoderCallbacks::new()
         .eos(move || {
@@ -57,25 +57,51 @@ fn run_example(servo_media: Arc<ServoMedia>) {
             eprintln!("Error decoding audio {:?}", e);
         })
         .progress(move |buffer, channel| {
-            let r = (*buffer).as_ref().try_into().unwrap();
-            mut_sender.lock().unwrap().send((r, channel)).unwrap();
+            let buf = (*buffer).as_ref().try_into().unwrap();
+            mut_sender.lock().unwrap().send((buf, channel)).unwrap();
         })
         .ready(move |channels| {
             println!("There are {:?} audio channels", channels);
-            decoded_audio.resize(channels as usize, Vec::new());
+            chan_sender.send(channels as usize).unwrap();
         })
         .build();
-    context.decode_audio_data(bytes.to_vec(), callbacks);
+    let (decode_sender, decode_receiver) = mpsc::channel();
+    context.decode_audio_data(callbacks, decode_receiver);
     println!("Decoding audio");
+
     context.message_node(
         buffer_source,
         AudioNodeMessage::AudioScheduledSourceNode(AudioScheduledSourceNodeMessage::Start(0.)),
     );
 
+    context.message_node(
+        buffer_source,
+        AudioNodeMessage::AudioBufferSourceNode(AudioBufferSourceNodeMessage::SetNeedDataCallback(
+            Box::new(move |buffer_size| {
+                let mut buffer = vec![0; buffer_size];
+                match reader.lock().unwrap().read(&mut buffer) {
+                    Ok(0) => {
+                        decode_sender.send(vec![]).unwrap_or_default();
+                    }
+                    Ok(size) => {
+                        decode_sender
+                            .send(buffer[..size].to_vec())
+                            .unwrap_or_default();
+                    }
+                    Err(e) => {
+                        eprintln!("Error: {}", e);
+                        decode_sender.send(vec![]).unwrap_or_default();
+                    }
+                }
+            }),
+        )),
+    );
+
+    let chans = chan_receiver.recv().unwrap();
+    let mut decoded_audio = vec![<Vec<f32>>::new(); chans];
+
     let mut set = false;
-    let mut decoded_audio = vec![<Vec<f32>>::new(); 2];
     'outer: while let Ok((data, channel)) = data_receiver.recv() {
-        let chans = decoded_audio.len();
         if chans == 0 || data.len() == 0 {
             continue;
         }
