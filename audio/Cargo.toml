@@ -12,8 +12,8 @@ path = "lib.rs"
 boxfnonce = "0.1"
 euclid = "0.20"
 log = "0.4"
-serde_derive = "1.0.66"
-serde = "1.0.66"
+serde_derive = "1.0.91"
+serde = "1.0.91"
 servo_media_derive = { path = "../servo-media-derive" }
 servo-media-player = { path = "../player" }
 servo-media-traits = { path = "../traits" }

@@ -112,8 +112,8 @@ impl WebRtcControllerBackend for GStreamerWebRtcController {
     fn create_offer(&mut self, cb: SendBoxFnOnce<'static, (SessionDescription,)>) -> WebRtcResult {
         self.flush_pending_streams(true)?;
         self.pipeline.set_state(gst::State::Playing)?;
-        let promise = gst::Promise::new_with_change_func(move |res| {
-            res.map(|s| on_offer_or_answer_created(SdpType::Offer, s, cb))
+        let promise = gst::Promise::with_change_func(move |res| {
+            res.map(|s| on_offer_or_answer_created(SdpType::Offer, s.unwrap(), cb))
                 .unwrap();
         });
 
@@ -123,8 +123,8 @@ impl WebRtcControllerBackend for GStreamerWebRtcController {
     }
 
     fn create_answer(&mut self, cb: SendBoxFnOnce<'static, (SessionDescription,)>) -> WebRtcResult {
-        let promise = gst::Promise::new_with_change_func(move |res| {
-            res.map(|s| on_offer_or_answer_created(SdpType::Answer, s, cb))
+        let promise = gst::Promise::with_change_func(move |res| {
+            res.map(|s| on_offer_or_answer_created(SdpType::Answer, s.unwrap(), cb))
                 .unwrap();
         });
 
@@ -360,7 +360,7 @@ impl GStreamerWebRtcController {
         let answer = gst_webrtc::WebRTCSessionDescription::new(ty, sdp);
         let thread = self.thread.clone();
         let remote_offer_generation = self.remote_offer_generation;
-        let promise = gst::Promise::new_with_change_func(move |_promise| {
+        let promise = gst::Promise::with_change_func(move |_promise| {
             // remote_offer_generation here ensures that DescriptionAdded doesn't
             // flush pending_remote_mline_info for stale remote offer callbacks
             thread.internal_event(InternalEvent::DescriptionAdded(

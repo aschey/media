@@ -69,14 +69,13 @@ impl RenderAndroid {
             GlApi::OpenGL3 => gst_gl::GLAPI::OPENGL3,
             GlApi::Gles1 => gst_gl::GLAPI::GLES1,
             GlApi::Gles2 => gst_gl::GLAPI::GLES2,
-            GlApi::None => gst_gl::GLAPI::NONE,
         };
 
         let (wrapped_context, display) = match gl_context {
             GlContext::Egl(context) => {
                 let display = match display_native {
                     NativeDisplay::Egl(display_native) => {
-                        unsafe { gst_gl::GLDisplayEGL::new_with_egl_display(display_native) }
+                        unsafe { gst_gl::GLDisplayEGL::with_egl_display(display_native) }
                             .and_then(|display| Ok(display.upcast()))
                             .ok()
                     }

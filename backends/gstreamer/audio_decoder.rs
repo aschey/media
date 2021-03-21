@@ -196,7 +196,7 @@ impl AudioDecoder for GStreamerAudioDecoder {
 
                         let callbacks_ = callbacks.clone();
                         appsink.set_callbacks(
-                            gst_app::AppSinkCallbacks::new()
+                            gst_app::AppSinkCallbacks::builder()
                                 .new_sample(move |appsink| {
                                     let sample =
                                         appsink.pull_sample().map_err(|_| gst::FlowError::Eos)?;
@@ -269,7 +269,7 @@ impl AudioDecoder for GStreamerAudioDecoder {
                     }
                 });
 
-                let mut audio_info_builder = gst_audio::AudioInfo::new(
+                let mut audio_info_builder = gst_audio::AudioInfo::builder(
                     gst_audio::AUDIO_FORMAT_F32,
                     options.sample_rate as u32,
                     channels,

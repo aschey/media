@@ -71,7 +71,6 @@ impl RenderUnix {
             GlApi::OpenGL3 => gst_gl::GLAPI::OPENGL3,
             GlApi::Gles1 => gst_gl::GLAPI::GLES1,
             GlApi::Gles2 => gst_gl::GLAPI::GLES2,
-            GlApi::None => gst_gl::GLAPI::NONE,
         };
 
         let (wrapped_context, display) = match gl_context {
@@ -79,7 +78,7 @@ impl RenderUnix {
                 let display = match display_native {
                     #[cfg(feature = "gl-egl")]
                     NativeDisplay::Egl(display_native) => {
-                        unsafe { gst_gl::GLDisplayEGL::new_with_egl_display(display_native) }
+                        unsafe { gst_gl::GLDisplayEGL::with_egl_display(display_native) }
                             .and_then(|display| Ok(display.upcast()))
                             .ok()
                     }
@@ -103,7 +102,7 @@ impl RenderUnix {
                 let display = match display_native {
                     #[cfg(feature = "gl-x11")]
                     NativeDisplay::X11(display_native) => {
-                        unsafe { gst_gl::GLDisplayX11::new_with_display(display_native) }
+                        unsafe { gst_gl::GLDisplayX11::with_display(display_native) }
                             .and_then(|display| Ok(display.upcast()))
                             .ok()
                     }

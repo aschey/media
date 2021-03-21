@@ -14,6 +14,8 @@ use url::Url;
 
 // Implementation sub-module of the GObject
 mod imp {
+    use gst::ProxyPad;
+
     use super::*;
 
     lazy_static! {
@@ -128,14 +130,16 @@ mod imp {
             src_pad.set_active(true).expect("Could not active pad");
             self.flow_combiner.lock().unwrap().add_pad(&proxy_pad);
             let combiner = self.flow_combiner.clone();
-            proxy_pad.set_chain_function(move |pad, parent, buffer| {
-                let chain_result = pad.proxy_pad_chain_default(parent, buffer);
-                let result = combiner.lock().unwrap().update_pad_flow(pad, chain_result);
-                if result == Err(gst::FlowError::Flushing) {
-                    return chain_result;
-                }
-                result
-            });
+            unsafe {
+                proxy_pad.set_chain_function(move |pad, parent, buffer| {
+                    let chain_result = ProxyPad::chain_default(pad, parent, buffer);
+                    let result = combiner.lock().unwrap().update_pad_flow(pad, chain_result);
+                    if result == Err(gst::FlowError::Flushing) {
+                        return chain_result;
+                    }
+                    result
+                });
+            }
 
             src.sync_state_with_parent().unwrap();
 
@@ -156,22 +160,18 @@ mod imp {
 
         // Called once at the very beginning of instantiation of each instance and
         // creates the data structure that contains all our state
-        fn new_with_class(_: &subclass::simple::ClassStruct<Self>) -> Self {
+        fn with_class(_: &subclass::simple::ClassStruct<Self>) -> Self {
             let audio_proxysrc = gst::ElementFactory::make("proxysrc", None)
                 .expect("Could not create proxysrc element");
-            let audio_srcpad = gst::GhostPad::new_no_target_from_template(
-                Some("audio_src"),
-                &AUDIO_SRC_PAD_TEMPLATE,
-            )
-            .unwrap();
+            let audio_srcpad =
+                gst::GhostPad::builder_with_template(&AUDIO_SRC_PAD_TEMPLATE, Some("audio_src"))
+                    .build();
 
             let video_proxysrc = gst::ElementFactory::make("proxysrc", None)
                 .expect("Could not create proxysrc element");
-            let video_srcpad = gst::GhostPad::new_no_target_from_template(
-                Some("video_src"),
-                &VIDEO_SRC_PAD_TEMPLATE,
-            )
-            .unwrap();
+            let video_srcpad =
+                gst::GhostPad::builder_with_template(&VIDEO_SRC_PAD_TEMPLATE, Some("video_src"))
+                    .build();
 
             Self {
                 cat: gst::DebugCategory::new(

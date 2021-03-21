@@ -8,10 +8,10 @@ name = "servo_media_gstreamer_render"
 path = "lib.rs"
 
 [dependencies.gstreamer]
-version = "0.15"
+version = "0.16.7"
 
 [dependencies.gstreamer-video]
-version = "0.15"
+version = "0.16.5"
 
 [dependencies.servo-media-player]
 path = "../../../player"
