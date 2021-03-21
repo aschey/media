@@ -21,39 +21,39 @@ log = "0.4"
 version = "0.2"
 
 [dependencies.glib]
-version = "0.10.1"
+version = "0.10"
 
 [dependencies.glib-sys]
-version = "0.10.1"
+version = "0.10"
 
 [dependencies.gstreamer-sys]
-version = "0.9.1"
+version = "0.9"
 features = ["v1_8"]
 
 [dependencies.gstreamer]
-version = "0.16.7"
+version = "0.16"
 
 [dependencies.gstreamer-app]
-version = "0.16.5"
+version = "0.16"
 
 [dependencies.gstreamer-audio]
-version = "0.16.5"
+version = "0.16"
 
 [dependencies.gstreamer-base]
-version = "0.16.5"
+version = "0.16"
 
 [dependencies.gstreamer-player]
-version = "0.16.5"
+version = "0.16"
 
 [dependencies.gstreamer-sdp]
-version = "0.16.5"
+version = "0.16"
 
 [dependencies.gstreamer-webrtc]
-version = "0.16.5"
+version = "0.16"
 features = ["v1_16"]
 
 [dependencies.gstreamer-video]
-version = "0.16.5"
+version = "0.16"
 
 [dependencies.ipc-channel]
 version = "0.15"
