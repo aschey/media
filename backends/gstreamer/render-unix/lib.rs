@@ -67,10 +67,11 @@ impl RenderUnix {
         let display_native = app_gl_context.get_native_display();
         let gl_context = app_gl_context.get_gl_context();
         let gl_api = match app_gl_context.get_gl_api() {
-            GlApi::OpenGL => gst_gl::GLAPI::OPENGL,
-            GlApi::OpenGL3 => gst_gl::GLAPI::OPENGL3,
-            GlApi::Gles1 => gst_gl::GLAPI::GLES1,
-            GlApi::Gles2 => gst_gl::GLAPI::GLES2,
+            GlApi::OpenGL => Some(gst_gl::GLAPI::OPENGL),
+            GlApi::OpenGL3 => Some(gst_gl::GLAPI::OPENGL3),
+            GlApi::Gles1 => Some(gst_gl::GLAPI::GLES1),
+            GlApi::Gles2 => Some(gst_gl::GLAPI::GLES2),
+            GlApi::None => None,
         };
 
         let (wrapped_context, display) = match gl_context {
@@ -152,11 +153,11 @@ impl RenderUnix {
         display: Option<gst_gl::GLDisplay>,
         handle: usize,
         platform: gst_gl::GLPlatform,
-        api: gst_gl::GLAPI,
+        api: Option<gst_gl::GLAPI>,
     ) -> (Option<gst_gl::GLContext>, Option<gst_gl::GLDisplay>) {
         if let Some(display) = display {
             let wrapped_context =
-                unsafe { gst_gl::GLContext::new_wrapped(&display, handle, platform, api) };
+                unsafe { gst_gl::GLContext::new_wrapped(&display, handle, platform, api.unwrap()) };
             (wrapped_context, Some(display))
         } else {
             (None, None)

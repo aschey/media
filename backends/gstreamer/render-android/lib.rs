@@ -65,10 +65,11 @@ impl RenderAndroid {
         let display_native = app_gl_context.get_native_display();
         let gl_context = app_gl_context.get_gl_context();
         let gl_api = match app_gl_context.get_gl_api() {
-            GlApi::OpenGL => gst_gl::GLAPI::OPENGL,
-            GlApi::OpenGL3 => gst_gl::GLAPI::OPENGL3,
-            GlApi::Gles1 => gst_gl::GLAPI::GLES1,
-            GlApi::Gles2 => gst_gl::GLAPI::GLES2,
+            GlApi::OpenGL => Some(gst_gl::GLAPI::OPENGL),
+            GlApi::OpenGL3 => Some(gst_gl::GLAPI::OPENGL3),
+            GlApi::Gles1 => Some(gst_gl::GLAPI::GLES1),
+            GlApi::Gles2 => Some(gst_gl::GLAPI::GLES2),
+            GlApi::None => None,
         };
 
         let (wrapped_context, display) = match gl_context {
@@ -88,7 +89,7 @@ impl RenderAndroid {
                             &display,
                             context,
                             gst_gl::GLPlatform::EGL,
-                            gl_api,
+                            gl_api.unwrap(),
                         )
                     };
                     (wrapped_context, Some(display))

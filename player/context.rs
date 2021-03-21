@@ -39,6 +39,7 @@ pub enum GlApi {
     OpenGL3,
     Gles1,
     Gles2,
+    None,
 }
 
 pub trait PlayerGLContext {
