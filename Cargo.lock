@@ -576,6 +576,7 @@ dependencies = [
  "failure",
  "failure_derive",
  "gleam",
+ "glib",
  "glutin",
  "ipc-channel",
  "rand 0.5.6",

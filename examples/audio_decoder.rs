@@ -1,17 +1,19 @@
 extern crate servo_media;
 extern crate servo_media_auto;
 
-use servo_media::audio::buffer_source_node::{AudioBuffer, AudioBufferSourceNodeMessage};
 use servo_media::audio::context::{AudioContextOptions, RealTimeAudioContextOptions};
 use servo_media::audio::decoder::AudioDecoderCallbacks;
 use servo_media::audio::node::{AudioNodeInit, AudioNodeMessage, AudioScheduledSourceNodeMessage};
+use servo_media::audio::{
+    buffer_source_node::{AudioBuffer, AudioBufferSourceNodeMessage},
+    gain_node::GainNodeOptions,
+};
 use servo_media::{ClientContextId, ServoMedia};
-use std::fs::File;
-use std::path::Path;
+
+use std::convert::TryInto;
+use std::env;
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
-use std::{convert::TryInto, io::Read};
-use std::{env, io::BufReader};
 use std::{thread, time};
 
 fn run_example(servo_media: Arc<ServoMedia>) {
@@ -25,11 +27,12 @@ fn run_example(servo_media: Arc<ServoMedia>) {
     let context = context.lock().unwrap();
     let _ = context.resume();
     let args: Vec<_> = env::args().collect();
-    let default = "./examples/resources/viper_cut.ogg"; //"C:\\shared_files\\Music\\EDM Mixes\\April - 2013.mp3";
+    let mut default = std::env::current_dir().unwrap();
+    default.push("examples/resources/viper_cut.ogg"); //"C:\\shared_files\\Music\\EDM Mixes\\April - 2013.mp3";
     let filename: &str = if args.len() == 2 {
         args[1].as_ref()
-    } else if Path::new(default).exists() {
-        default
+    } else if default.exists() {
+        default.to_str().unwrap()
     } else {
         panic!("Usage: cargo run --bin audio_decoder <file_path>")
     };
@@ -38,16 +41,18 @@ fn run_example(servo_media: Arc<ServoMedia>) {
         AudioNodeInit::AudioBufferSourceNode(Default::default()),
         Default::default(),
     );
+    let gain = context.create_node(
+        AudioNodeInit::GainNode(GainNodeOptions { gain: 1. }),
+        Default::default(),
+    );
     let dest = context.dest_node();
-    context.connect_ports(buffer_source.output(0), dest.input(0));
+    context.connect_ports(buffer_source.output(0), gain.input(0));
+    context.connect_ports(gain.output(0), dest.input(0));
 
     let (sender, receiver) = mpsc::channel();
     let (chan_sender, chan_receiver) = mpsc::channel();
     let (data_sender, data_receiver) = mpsc::channel::<(Box<[f32]>, u32)>();
     let mut_sender = Mutex::new(data_sender);
-
-    let file = File::open(filename).unwrap();
-    let reader = Mutex::new(BufReader::new(file));
 
     let callbacks = AudioDecoderCallbacks::new()
         .eos(move || {
@@ -66,7 +71,9 @@ fn run_example(servo_media: Arc<ServoMedia>) {
         })
         .build();
     let (decode_sender, decode_receiver) = mpsc::channel();
-    context.decode_audio_data(callbacks, decode_receiver);
+    let decode_receiver_mut = Arc::new(Mutex::new(decode_receiver));
+    let uri = glib::filename_to_uri(filename, None).unwrap().to_string();
+    context.decode_audio_data(uri, None, decode_receiver_mut, callbacks);
     println!("Decoding audio");
 
     context.message_node(
@@ -77,22 +84,8 @@ fn run_example(servo_media: Arc<ServoMedia>) {
     context.message_node(
         buffer_source,
         AudioNodeMessage::AudioBufferSourceNode(AudioBufferSourceNodeMessage::SetNeedDataCallback(
-            Box::new(move |buffer_size| {
-                let mut buffer = vec![0; buffer_size];
-                match reader.lock().unwrap().read(&mut buffer) {
-                    Ok(0) => {
-                        decode_sender.send(vec![]).unwrap_or_default();
-                    }
-                    Ok(size) => {
-                        decode_sender
-                            .send(buffer[..size].to_vec())
-                            .unwrap_or_default();
-                    }
-                    Err(e) => {
-                        eprintln!("Error: {}", e);
-                        decode_sender.send(vec![]).unwrap_or_default();
-                    }
-                }
+            Box::new(move || {
+                decode_sender.send(()).unwrap_or_default();
             }),
         )),
     );
@@ -138,7 +131,8 @@ fn run_example(servo_media: Arc<ServoMedia>) {
     receiver.recv().unwrap();
     println!("Audio decoded");
 
-    thread::sleep(time::Duration::from_millis(6000));
+    thread::sleep(time::Duration::from_millis(5000));
+
     let _ = context.close();
 }
 

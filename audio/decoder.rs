@@ -1,5 +1,5 @@
 use boxfnonce::SendBoxFnOnce;
-use std::sync::{mpsc::Receiver, Mutex};
+use std::sync::{mpsc::Receiver, Arc, Mutex};
 
 #[derive(Debug, PartialEq)]
 pub enum AudioDecoderError {
@@ -128,7 +128,9 @@ impl Default for AudioDecoderOptions {
 pub trait AudioDecoder {
     fn decode(
         &self,
-        receiver: Receiver<Vec<u8>>,
+        uri: String,
+        start_millis: Option<u64>,
+        receiver: Arc<Mutex<Receiver<()>>>,
         callbacks: AudioDecoderCallbacks,
         options: Option<AudioDecoderOptions>,
     );

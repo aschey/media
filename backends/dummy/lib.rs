@@ -217,7 +217,9 @@ pub struct DummyAudioDecoder;
 impl AudioDecoder for DummyAudioDecoder {
     fn decode(
         &self,
-        _: Receiver<Vec<u8>>,
+        _: String,
+        _: Option<u64>,
+        _: Arc<Mutex<Receiver<()>>>,
         _: AudioDecoderCallbacks,
         _: Option<AudioDecoderOptions>,
     ) {

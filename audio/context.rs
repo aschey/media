@@ -262,7 +262,13 @@ impl AudioContext {
 
     /// Asynchronously decodes the audio file data contained in the given
     /// buffer.
-    pub fn decode_audio_data(&self, callbacks: AudioDecoderCallbacks, receiver: Receiver<Vec<u8>>) {
+    pub fn decode_audio_data(
+        &self,
+        uri: String,
+        start_millis: Option<u64>,
+        receiver: Arc<Mutex<Receiver<()>>>,
+        callbacks: AudioDecoderCallbacks,
+    ) {
         let mut options = AudioDecoderOptions::default();
         options.sample_rate = self.sample_rate;
         let make_decoder = self.make_decoder.clone();
@@ -271,7 +277,7 @@ impl AudioContext {
             .spawn(move || {
                 let audio_decoder = make_decoder();
 
-                audio_decoder.decode(receiver, callbacks, Some(options));
+                audio_decoder.decode(uri, start_millis, receiver, callbacks, Some(options));
             })
             .unwrap();
     }

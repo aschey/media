@@ -5,7 +5,7 @@ use node::{AudioNodeEngine, AudioScheduledSourceNodeMessage, BlockInfo, OnEndedC
 use node::{AudioNodeType, ChannelInfo, ShouldPlay};
 use param::{Param, ParamType};
 
-const BUFFER_SIZE: usize = 4096;
+const BUFFER_THRESHOLD: usize = 16384;
 
 /// Control messages directed to AudioBufferSourceNodes.
 pub enum AudioBufferSourceNodeMessage {
@@ -22,7 +22,7 @@ pub enum AudioBufferSourceNodeMessage {
     /// Set start parameters (when, offset, duration).
     SetStartParams(f64, Option<f64>, Option<f64>),
     // Callback invoked when the queue is running out of data
-    SetNeedDataCallback(Box<dyn Fn(usize) + Send>),
+    SetNeedDataCallback(Box<dyn Fn() + Send>),
 }
 
 /// This specifies options for constructing an AudioBufferSourceNode.
@@ -100,7 +100,7 @@ pub(crate) struct AudioBufferSourceNode {
     stop_at: Option<Tick>,
     /// The ended event callback.
     pub onended_callback: Option<OnEndedCallback>,
-    need_data_callback: Option<Box<dyn Fn(usize) + Send>>,
+    need_data_callback: Option<Box<dyn Fn() + Send>>,
 }
 
 impl AudioBufferSourceNode {
@@ -171,7 +171,7 @@ impl AudioNodeEngine for AudioBufferSourceNode {
 
         if self.buffer.is_none() {
             if let Some(callback) = &self.need_data_callback {
-                callback(BUFFER_SIZE);
+                callback();
             }
             inputs.blocks.push(Default::default());
             return inputs;
@@ -186,9 +186,10 @@ impl AudioNodeEngine for AudioBufferSourceNode {
         };
 
         let buffer = self.buffer.as_mut().unwrap();
-        if buffer.remaining() < BUFFER_SIZE {
+
+        if buffer.remaining() < BUFFER_THRESHOLD {
             if let Some(callback) = &self.need_data_callback {
-                callback(BUFFER_SIZE);
+                callback();
             }
         }
 
