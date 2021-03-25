@@ -1,6 +1,8 @@
+extern crate bus;
 extern crate servo_media;
 extern crate servo_media_auto;
 
+use bus::Bus;
 use servo_media::audio::context::{AudioContextOptions, RealTimeAudioContextOptions};
 use servo_media::audio::decoder::AudioDecoderCallbacks;
 use servo_media::audio::node::{AudioNodeInit, AudioNodeMessage, AudioScheduledSourceNodeMessage};
@@ -9,11 +11,10 @@ use servo_media::audio::{
     gain_node::GainNodeOptions,
 };
 use servo_media::{ClientContextId, ServoMedia};
-
-use std::convert::TryInto;
-use std::env;
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
+use std::{collections::VecDeque, convert::TryInto};
+use std::{env, iter::FromIterator};
 use std::{thread, time};
 
 fn run_example(servo_media: Arc<ServoMedia>) {
@@ -28,7 +29,7 @@ fn run_example(servo_media: Arc<ServoMedia>) {
     let _ = context.resume();
     let args: Vec<_> = env::args().collect();
     let mut default = std::env::current_dir().unwrap();
-    default.push("examples/resources/viper_cut.ogg"); //"C:\\shared_files\\Music\\EDM Mixes\\April - 2013.mp3";
+    default.push("examples/resources/viper_cut.ogg");
     let filename: &str = if args.len() == 2 {
         args[1].as_ref()
     } else if default.exists() {
@@ -70,10 +71,10 @@ fn run_example(servo_media: Arc<ServoMedia>) {
             chan_sender.send(channels as usize).unwrap();
         })
         .build();
-    let (decode_sender, decode_receiver) = mpsc::channel();
-    let decode_receiver_mut = Arc::new(Mutex::new(decode_receiver));
+    let decode_bus = Arc::new(Mutex::new(Bus::new(16)));
+
     let uri = glib::filename_to_uri(filename, None).unwrap().to_string();
-    context.decode_audio_data(uri, None, decode_receiver_mut, callbacks);
+    context.decode_audio_data(uri, None, decode_bus.clone(), callbacks);
     println!("Decoding audio");
 
     context.message_node(
@@ -85,35 +86,35 @@ fn run_example(servo_media: Arc<ServoMedia>) {
         buffer_source,
         AudioNodeMessage::AudioBufferSourceNode(AudioBufferSourceNodeMessage::SetNeedDataCallback(
             Box::new(move || {
-                decode_sender.send(()).unwrap_or_default();
+                decode_bus.lock().unwrap().broadcast(());
             }),
         )),
     );
 
     let chans = chan_receiver.recv().unwrap();
-    let mut decoded_audio = vec![<Vec<f32>>::new(); chans];
+    let mut decoded_audio = vec![<VecDeque<f32>>::new(); chans];
 
     let mut set = false;
-    'outer: while let Ok((data, channel)) = data_receiver.recv() {
+    while let Ok((data, channel)) = data_receiver.recv() {
         if chans == 0 || data.len() == 0 {
             continue;
         }
-        decoded_audio[(channel - 1) as usize].extend_from_slice((*data).as_ref());
+        decoded_audio[(channel - 1) as usize].append(&mut VecDeque::from_iter((*data).to_owned()));
+        let able_to_push = decoded_audio.iter().map(|a| a.len()).min().unwrap();
 
-        for chan in &decoded_audio {
-            if decoded_audio[0].len() != chan.len() {
-                continue 'outer;
-            }
+        if able_to_push == 0 {
+            continue;
         }
+        let to_push = decoded_audio
+            .iter_mut()
+            .map(|a| a.drain(..able_to_push).collect())
+            .collect();
 
         if !set {
             context.message_node(
                 buffer_source,
                 AudioNodeMessage::AudioBufferSourceNode(AudioBufferSourceNodeMessage::SetBuffer(
-                    Some(AudioBuffer::from_buffers(
-                        decoded_audio.to_vec(),
-                        sample_rate,
-                    )),
+                    Some(AudioBuffer::from_buffers(to_push, sample_rate)),
                 )),
             );
             set = true;
@@ -121,12 +122,10 @@ fn run_example(servo_media: Arc<ServoMedia>) {
             context.message_node(
                 buffer_source,
                 AudioNodeMessage::AudioBufferSourceNode(AudioBufferSourceNodeMessage::PushBuffer(
-                    decoded_audio.to_vec(),
+                    to_push,
                 )),
             );
         }
-
-        decoded_audio = vec![<Vec<f32>>::new(); chans];
     }
     receiver.recv().unwrap();
     println!("Audio decoded");

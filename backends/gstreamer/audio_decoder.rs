@@ -1,13 +1,11 @@
+use bus::Bus;
 use byte_slice_cast::*;
 use gst::prelude::*;
 use gst_app;
 use gst_audio;
 use servo_media_audio::decoder::{AudioDecoder, AudioDecoderCallbacks};
 use servo_media_audio::decoder::{AudioDecoderError, AudioDecoderOptions};
-use std::sync::{
-    mpsc::{self, Receiver},
-    Arc, Mutex,
-};
+use std::sync::{mpsc, Arc, Mutex};
 
 pub struct GStreamerAudioDecoderProgress(gst::buffer::MappedBuffer<gst::buffer::Readable>);
 
@@ -30,7 +28,7 @@ impl AudioDecoder for GStreamerAudioDecoder {
         &self,
         uri: String,
         start_millis: Option<u64>,
-        decode_receiver: Arc<Mutex<Receiver<()>>>,
+        decode_bus: Arc<Mutex<Bus<()>>>,
         callbacks: AudioDecoderCallbacks,
         options: Option<AudioDecoderOptions>,
     ) {
@@ -136,7 +134,7 @@ impl AudioDecoder for GStreamerAudioDecoder {
             };
             let channels = sample_audio_info.channels();
             callbacks.ready(channels);
-            let decode_receiver = decode_receiver.clone();
+            let decode_bus = decode_bus.clone();
             let insert_deinterleave = || -> Result<(), AudioDecoderError> {
                 let convert = gst::ElementFactory::make("audioconvert", None).map_err(|_| {
                     AudioDecoderError::Backend("audioconvert creation failed".to_owned())
@@ -199,18 +197,15 @@ impl AudioDecoder for GStreamerAudioDecoder {
 
                         let callbacks_ = callbacks.clone();
                         let mut pushed_samples = 0;
-                        let decode_receiver = decode_receiver.clone();
-
+                        let mut rx = decode_bus.lock().unwrap().add_rx();
                         appsink.set_callbacks(
                             gst_app::AppSinkCallbacks::builder()
                                 .new_sample(move |appsink| {
-                                    if pushed_samples >= 40 {
-                                        decode_receiver.lock().unwrap().recv().unwrap();
+                                    if pushed_samples >= 20 {
+                                        rx.recv().unwrap();
                                         pushed_samples = 0;
                                     }
-
                                     pushed_samples += 1;
-
                                     let sample =
                                         appsink.pull_sample().map_err(|_| gst::FlowError::Eos)?;
                                     let buffer = sample.get_buffer_owned().ok_or_else(|| {

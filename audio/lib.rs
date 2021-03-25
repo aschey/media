@@ -4,15 +4,15 @@ extern crate serde_derive;
 #[macro_use]
 extern crate servo_media_derive;
 
-extern crate servo_media_player as player;
-
 extern crate boxfnonce;
+extern crate bus;
 extern crate byte_slice_cast;
 extern crate euclid;
 extern crate log;
 extern crate num_complex;
 extern crate num_traits;
 extern crate petgraph;
+extern crate servo_media_player as player;
 extern crate smallvec;
 extern crate speexdsp_resampler;
 #[macro_use]

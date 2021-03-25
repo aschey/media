@@ -16,6 +16,7 @@ path = "lib.rs"
 boxfnonce = "0.1.0"
 mime = "0.3.13"
 log = "0.4"
+bus = "2.2.3"
 
 [dependencies.byte-slice-cast]
 version = "0.2"

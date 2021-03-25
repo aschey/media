@@ -1,4 +1,4 @@
-use std::{collections::VecDeque, iter::FromIterator, usize};
+use std::{collections::VecDeque, usize};
 
 use block::{Block, Chunk, Tick, FRAMES_PER_BLOCK};
 use node::{AudioNodeEngine, AudioScheduledSourceNodeMessage, BlockInfo, OnEndedCallback};
@@ -12,7 +12,7 @@ pub enum AudioBufferSourceNodeMessage {
     /// Set the data block holding the audio sample data to be played.
     SetBuffer(Option<AudioBuffer>),
     /// Push data onto the buffer. SetBuffer must be called first.
-    PushBuffer(Vec<Vec<f32>>),
+    PushBuffer(Vec<VecDeque<f32>>),
     /// Set loop parameter.
     SetLoopEnabled(bool),
     /// Set loop parameter.
@@ -400,13 +400,13 @@ impl AudioBuffer {
         }
     }
 
-    pub fn from_buffers(buffers: Vec<Vec<f32>>, sample_rate: f32) -> Self {
+    pub fn from_buffers(buffers: Vec<VecDeque<f32>>, sample_rate: f32) -> Self {
         for buf in &buffers {
             assert_eq!(buf.len(), buffers[0].len())
         }
         let size = buffers[0].len();
         Self {
-            buffers: Self::to_queue(buffers),
+            buffers,
             sample_rate,
             start_position: 0,
             size,
@@ -414,15 +414,15 @@ impl AudioBuffer {
         }
     }
 
-    pub fn from_buffer(buffer: Vec<f32>, sample_rate: f32) -> Self {
+    pub fn from_buffer(buffer: VecDeque<f32>, sample_rate: f32) -> Self {
         AudioBuffer::from_buffers(vec![buffer], sample_rate)
     }
 
-    pub fn push(&mut self, buffers: Vec<Vec<f32>>) {
+    pub fn push(&mut self, buffers: Vec<VecDeque<f32>>) {
         assert_eq!(self.buffers.len(), buffers.len());
         self.size += buffers[0].len();
-        let queue = Self::to_queue(buffers);
-        for (i, mut buf) in queue.into_iter().enumerate() {
+
+        for (i, mut buf) in buffers.into_iter().enumerate() {
             self.buffers[i].append(&mut buf);
         }
     }
@@ -472,12 +472,5 @@ impl AudioBuffer {
                 }
             }
         }
-    }
-
-    fn to_queue(buffers: Vec<Vec<f32>>) -> Vec<VecDeque<f32>> {
-        buffers
-            .into_iter()
-            .map(|b| VecDeque::from_iter(b))
-            .collect::<Vec<_>>()
     }
 }

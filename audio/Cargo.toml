@@ -21,6 +21,7 @@ servo-media-streams = { path = "../streams" }
 smallvec = "0.6.1"
 speexdsp-resampler = "0.1.0"
 num-complex = "0.2.4"
+bus = "2.2.3"
 
 [dependencies.petgraph]
 version = "0.4.12"
