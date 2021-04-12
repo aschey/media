@@ -222,6 +222,8 @@ impl AudioDecoder for DummyAudioDecoder {
         _: String,
         _: Option<u64>,
         _: Arc<Mutex<Bus<()>>>,
+        _: mpsc::SyncSender<()>,
+        _: mpsc::Receiver<()>,
         _: AudioDecoderCallbacks,
         _: Option<AudioDecoderOptions>,
     ) {

@@ -330,7 +330,7 @@ impl AudioNodeEngine for AudioBufferSourceNode {
                         } else if !forward && pos < actual_loop_start {
                             pos += actual_loop_end - actual_loop_start;
                         }
-                    } else if pos < 0. || pos >= buffer.remaining() as f64 {
+                    } else if pos < 0. || pos >= buffer.len() as f64 {
                         break;
                     }
 
@@ -354,6 +354,7 @@ impl AudioNodeEngine for AudioBufferSourceNode {
 
         if !self.loop_enabled && (self.buffer_pos < 0. || self.buffer_pos >= buffer.len() as f64)
             || self.buffer_duration <= 0.
+            || (buffer.len() > 0 && buffer.remaining() <= 0)
         {
             self.maybe_trigger_onended_callback();
         }
