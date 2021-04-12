@@ -202,6 +202,7 @@ impl GStreamerWebRtcDataChannel {
                                 WebRTCDataChannelState::__Unknown(state) => {
                                     DataChannelState::__Unknown(state)
                                 }
+                                _ => DataChannelState::__Unknown(0),
                             };
                             thread_.lock().unwrap().internal_event(
                                 InternalEvent::OnDataChannelEvent(

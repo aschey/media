@@ -1,4 +1,5 @@
 extern crate boxfnonce;
+extern crate bus;
 extern crate ipc_channel;
 extern crate servo_media;
 extern crate servo_media_audio;
@@ -8,6 +9,7 @@ extern crate servo_media_traits;
 extern crate servo_media_webrtc;
 
 use boxfnonce::SendBoxFnOnce;
+use bus::Bus;
 use ipc_channel::ipc::IpcSender;
 use servo_media::{Backend, BackendInit, SupportsMediaType};
 use servo_media_audio::block::{Block, Chunk};
@@ -215,7 +217,17 @@ impl WebRtcBackend for DummyBackend {
 pub struct DummyAudioDecoder;
 
 impl AudioDecoder for DummyAudioDecoder {
-    fn decode(&self, _: Vec<u8>, _: AudioDecoderCallbacks, _: Option<AudioDecoderOptions>) {}
+    fn decode(
+        &self,
+        _: String,
+        _: Option<u64>,
+        _: Arc<Mutex<Bus<()>>>,
+        _: mpsc::SyncSender<()>,
+        _: mpsc::Receiver<()>,
+        _: AudioDecoderCallbacks,
+        _: Option<AudioDecoderOptions>,
+    ) {
+    }
 }
 
 pub struct DummySocket;

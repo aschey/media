@@ -8,24 +8,24 @@ use std::i32;
 
 trait AddToCaps {
     type Bound;
-    fn add_to_caps<'a>(
+    fn add_to_caps(
         &self,
         name: &str,
         min: Self::Bound,
         max: Self::Bound,
-        builder: gst::caps::Builder<'a>,
-    ) -> Option<gst::caps::Builder<'a>>;
+        builder: gst::caps::Builder<gst::caps::NoFeature>,
+    ) -> Option<gst::caps::Builder<gst::caps::NoFeature>>;
 }
 
 impl AddToCaps for Constrain<u32> {
     type Bound = u32;
-    fn add_to_caps<'a>(
+    fn add_to_caps(
         &self,
         name: &str,
         min: u32,
         max: u32,
-        builder: gst::caps::Builder<'a>,
-    ) -> Option<gst::caps::Builder<'a>> {
+        builder: gst::caps::Builder<gst::caps::NoFeature>,
+    ) -> Option<gst::caps::Builder<gst::caps::NoFeature>> {
         match self {
             Constrain::Value(v) => Some(builder.field(name, v)),
             Constrain::Range(r) => {
@@ -59,8 +59,8 @@ impl AddToCaps for Constrain<f64> {
         name: &str,
         min: i32,
         max: i32,
-        builder: gst::caps::Builder<'a>,
-    ) -> Option<gst::caps::Builder<'a>> {
+        builder: gst::caps::Builder<gst::caps::NoFeature>,
+    ) -> Option<gst::caps::Builder<gst::caps::NoFeature>> {
         match self {
             Constrain::Value(v) => {
                 Some(builder.field("name", &gst::Fraction::approximate_f64(*v)?))

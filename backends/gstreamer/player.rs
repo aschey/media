@@ -243,7 +243,7 @@ impl PlayerInner {
         if let Some(ref metadata) = self.last_metadata {
             if let Some(ref duration) = metadata.duration {
                 let pipeline = self.player.get_pipeline();
-                let mut buffering = gst::Query::new_buffering(gst::Format::Percent);
+                let mut buffering = gst::query::Buffering::new(gst::Format::Percent);
                 if pipeline.query(&mut buffering) {
                     let ranges = buffering.get_ranges();
                     for i in 0..ranges.len() {
@@ -483,7 +483,7 @@ impl GStreamerPlayer {
             let audio_sink = audio_sink.dynamic_cast::<gst_app::AppSink>().unwrap();
             let audio_renderer_ = audio_renderer.clone();
             audio_sink.set_callbacks(
-                gst_app::AppSinkCallbacks::new()
+                gst_app::AppSinkCallbacks::builder()
                     .new_preroll(|_| Ok(gst::FlowSuccess::Ok))
                     .new_sample(move |audio_sink| {
                         let sample = audio_sink.pull_sample().map_err(|_| gst::FlowError::Eos)?;
@@ -658,7 +658,7 @@ impl GStreamerPlayer {
             let observer = self.observer.clone();
             // Set video_sink callbacks.
             inner.lock().unwrap().video_sink.set_callbacks(
-                gst_app::AppSinkCallbacks::new()
+                gst_app::AppSinkCallbacks::builder()
                     .new_preroll(|_| Ok(gst::FlowSuccess::Ok))
                     .new_sample(move |video_sink| {
                         let sample = video_sink.pull_sample().map_err(|_| gst::FlowError::Eos)?;
@@ -720,7 +720,7 @@ impl GStreamerPlayer {
                         let enough_data__ = inner.enough_data.clone();
                         let seek_channel = Arc::new(Mutex::new(SeekChannel::new()));
                         servosrc.set_callbacks(
-                            gst_app::AppSrcCallbacks::new()
+                            gst_app::AppSrcCallbacks::builder()
                                 .need_data(move |_, _| {
                                     // We block the caller of the setup method until we get
                                     // the first need-data signal, so we ensure that we

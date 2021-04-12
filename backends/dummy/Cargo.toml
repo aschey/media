@@ -9,6 +9,7 @@ path = "lib.rs"
 
 [dependencies]
 boxfnonce = "0.1.0"
+bus = "2.2.3"
 ipc-channel = "0.15"
 servo-media = { path = "../../servo-media" }
 servo-media-audio = { path = "../../audio" }

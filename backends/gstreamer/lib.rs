@@ -1,4 +1,5 @@
 extern crate boxfnonce;
+extern crate bus;
 extern crate byte_slice_cast;
 extern crate mime;
 

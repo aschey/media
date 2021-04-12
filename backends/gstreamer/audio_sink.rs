@@ -51,7 +51,7 @@ impl<T: SinkType> GStreamerAudioSink<T> {
 
 impl<T: SinkType> GStreamerAudioSink<T> {
     fn set_audio_info(&self, sample_rate: f32, channels: u8) -> Result<(), AudioSinkError> {
-        let audio_info = gst_audio::AudioInfo::new(
+        let audio_info = gst_audio::AudioInfo::builder(
             gst_audio::AUDIO_FORMAT_F32,
             sample_rate as u32,
             channels.into(),
@@ -98,7 +98,7 @@ impl<T: SinkType> AudioSink for GStreamerAudioSink<T> {
                         .send(AudioRenderThreadMsg::SinkNeedData)
                         .unwrap();
                 };
-                appsrc.set_callbacks(AppSrcCallbacks::new().need_data(need_data).build());
+                appsrc.set_callbacks(AppSrcCallbacks::builder().need_data(need_data).build());
             })
             .unwrap();
 

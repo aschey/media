@@ -10,8 +10,8 @@ name = "servo_media_player"
 path = "lib.rs"
 
 [dependencies]
-serde = "1.0.66"
-serde_derive = "1.0.66"
+serde = "1.0.91"
+serde_derive = "1.0.91"
 ipc-channel = "0.15"
 
 [dependencies.servo-media-streams]

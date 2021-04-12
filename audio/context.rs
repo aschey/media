@@ -1,3 +1,4 @@
+use bus::Bus;
 use decoder::{AudioDecoder, AudioDecoderCallbacks, AudioDecoderOptions};
 use graph::{AudioGraph, InputPort, NodeId, OutputPort, PortId};
 use node::{AudioNodeInit, AudioNodeMessage, ChannelInfo};
@@ -262,16 +263,33 @@ impl AudioContext {
 
     /// Asynchronously decodes the audio file data contained in the given
     /// buffer.
-    pub fn decode_audio_data(&self, data: Vec<u8>, callbacks: AudioDecoderCallbacks) {
+    pub fn decode_audio_data(
+        &self,
+        uri: &str,
+        start_millis: Option<u64>,
+        decode_bus: Arc<Mutex<Bus<()>>>,
+        sender: mpsc::SyncSender<()>,
+        receiver: mpsc::Receiver<()>,
+        callbacks: AudioDecoderCallbacks,
+    ) {
         let mut options = AudioDecoderOptions::default();
         options.sample_rate = self.sample_rate;
         let make_decoder = self.make_decoder.clone();
+        let uri = uri.to_owned();
         Builder::new()
             .name("AudioDecoder".to_owned())
             .spawn(move || {
                 let audio_decoder = make_decoder();
 
-                audio_decoder.decode(data, callbacks, Some(options));
+                audio_decoder.decode(
+                    uri,
+                    start_millis,
+                    decode_bus,
+                    sender,
+                    receiver,
+                    callbacks,
+                    Some(options),
+                );
             })
             .unwrap();
     }

@@ -1,12 +1,10 @@
+use bus::Bus;
 use byte_slice_cast::*;
-use gst;
 use gst::prelude::*;
 use gst_app;
 use gst_audio;
 use servo_media_audio::decoder::{AudioDecoder, AudioDecoderCallbacks};
 use servo_media_audio::decoder::{AudioDecoderError, AudioDecoderOptions};
-use std::io::Cursor;
-use std::io::Read;
 use std::sync::{mpsc, Arc, Mutex};
 
 pub struct GStreamerAudioDecoderProgress(gst::buffer::MappedBuffer<gst::buffer::Readable>);
@@ -28,55 +26,48 @@ impl GStreamerAudioDecoder {
 impl AudioDecoder for GStreamerAudioDecoder {
     fn decode(
         &self,
-        data: Vec<u8>,
+        uri: String,
+        start_millis: Option<u64>,
+        decode_bus: Arc<Mutex<Bus<()>>>,
+        sender: mpsc::SyncSender<()>,
+        receiver: mpsc::Receiver<()>,
         callbacks: AudioDecoderCallbacks,
         options: Option<AudioDecoderOptions>,
     ) {
         let pipeline = gst::Pipeline::new(None);
         let callbacks = Arc::new(callbacks);
 
-        let appsrc = match gst::ElementFactory::make("appsrc", None) {
-            Ok(appsrc) => appsrc,
-            _ => {
-                return callbacks.error(AudioDecoderError::Backend(
-                    "appsrc creation failed".to_owned(),
-                ));
-            }
-        };
-
-        let decodebin = match gst::ElementFactory::make("decodebin", None) {
+        let decodebin = match gst::ElementFactory::make("uridecodebin", None) {
             Ok(decodebin) => decodebin,
             _ => {
                 return callbacks.error(AudioDecoderError::Backend(
-                    "decodebin creation failed".to_owned(),
+                    "uridecodebin creation failed".to_owned(),
                 ));
             }
         };
 
+        if let Err(e) = decodebin.set_property("uri", &uri.to_value()) {
+            return callbacks.error(AudioDecoderError::Backend(e.to_string()));
+        }
         // decodebin uses something called a "sometimes-pad", which is basically
         // a pad that will show up when a certain condition is met,
         // in decodebins case that is media being decoded
-        if let Err(e) = pipeline.add_many(&[&appsrc, &decodebin]) {
+        if let Err(e) = pipeline.add_many(&[&decodebin]) {
             return callbacks.error(AudioDecoderError::Backend(e.to_string()));
         }
 
-        if let Err(e) = gst::Element::link_many(&[&appsrc, &decodebin]) {
+        if let Err(e) = gst::Element::link_many(&[&decodebin]) {
             return callbacks.error(AudioDecoderError::Backend(e.to_string()));
         }
-
-        let appsrc = appsrc.downcast::<gst_app::AppSrc>().unwrap();
 
         let options = options.unwrap_or_default();
-
-        let (sender, receiver) = mpsc::channel();
-        let sender = Arc::new(Mutex::new(sender));
 
         let pipeline_ = pipeline.downgrade();
         let callbacks_ = callbacks.clone();
         let sender_ = sender.clone();
         // Initial pipeline looks like
         //
-        // appsrc ! decodebin2! ...
+        //  decodebin2! ...
         //
         // We plug in the second part of the pipeline, including the deinterleave element,
         // once the media starts being decoded.
@@ -94,14 +85,13 @@ impl AudioDecoder for GStreamerAudioDecoder {
             // each channel.
 
             let callbacks = &callbacks_;
-            let sender = &sender_;
             let pipeline = match pipeline_.upgrade() {
                 Some(pipeline) => pipeline,
                 None => {
                     callbacks.error(AudioDecoderError::Backend(
                         "Pipeline failed upgrade".to_owned(),
                     ));
-                    let _ = sender.lock().unwrap().send(());
+                    let _ = sender.send(());
                     return;
                 }
             };
@@ -119,7 +109,7 @@ impl AudioDecoder for GStreamerAudioDecoder {
                         callbacks.error(AudioDecoderError::Backend(
                             "Failed to get media type from pad".to_owned(),
                         ));
-                        let _ = sender.lock().unwrap().send(());
+                        let _ = sender.send(());
                         return;
                     }
                     Some(media_type) => media_type,
@@ -128,7 +118,7 @@ impl AudioDecoder for GStreamerAudioDecoder {
 
             if !is_audio {
                 callbacks.error(AudioDecoderError::InvalidMediaFormat);
-                let _ = sender.lock().unwrap().send(());
+                let _ = sender.send(());
                 return;
             }
 
@@ -136,13 +126,13 @@ impl AudioDecoder for GStreamerAudioDecoder {
                 Ok(sample_audio_info) => sample_audio_info,
                 _ => {
                     callbacks.error(AudioDecoderError::Backend("AudioInfo failed".to_owned()));
-                    let _ = sender.lock().unwrap().send(());
+                    let _ = sender.send(());
                     return;
                 }
             };
             let channels = sample_audio_info.channels();
             callbacks.ready(channels);
-
+            let decode_bus = decode_bus.clone();
             let insert_deinterleave = || -> Result<(), AudioDecoderError> {
                 let convert = gst::ElementFactory::make("audioconvert", None).map_err(|_| {
                     AudioDecoderError::Backend("audioconvert creation failed".to_owned())
@@ -190,13 +180,29 @@ impl AudioDecoder for GStreamerAudioDecoder {
                             AudioDecoderError::Backend("appsink creation failed".to_owned())
                         })?;
                         let appsink = sink.clone().dynamic_cast::<gst_app::AppSink>().unwrap();
-                        sink.set_property("sync", &false.to_value())
+                        appsink
+                            .set_property("sync", &false.to_value())
                             .expect("appsink doesn't handle expected 'sync' property");
+                        appsink
+                            .set_property("emit-signals", &true.to_value())
+                            .expect("appsink doesn't handle expected 'emit-signals' property");
+                        appsink
+                            .set_property("max-buffers", &(50 as u32).to_value())
+                            .expect("appsink doesn't handle expected 'max-buffers' property");
+                        appsink
+                            .set_property("wait-on-eos", &true.to_value())
+                            .expect("appsink doesn't handle expected 'wait-on-eos' property");
 
                         let callbacks_ = callbacks.clone();
+                        let mut pushed_samples = 0;
+                        let mut rx = decode_bus.lock().unwrap().add_rx();
                         appsink.set_callbacks(
-                            gst_app::AppSinkCallbacks::new()
+                            gst_app::AppSinkCallbacks::builder()
                                 .new_sample(move |appsink| {
+                                    if pushed_samples >= 20 {
+                                        rx.recv().unwrap();
+                                        pushed_samples = 0;
+                                    }
                                     let sample =
                                         appsink.pull_sample().map_err(|_| gst::FlowError::Eos)?;
                                     let buffer = sample.get_buffer_owned().ok_or_else(|| {
@@ -204,6 +210,7 @@ impl AudioDecoder for GStreamerAudioDecoder {
                                         gst::FlowError::Error
                                     })?;
 
+                                    pushed_samples += 1;
                                     let audio_info = sample
                                         .get_caps()
                                         .and_then(|caps| gst_audio::AudioInfo::from_caps(caps).ok())
@@ -268,7 +275,7 @@ impl AudioDecoder for GStreamerAudioDecoder {
                     }
                 });
 
-                let mut audio_info_builder = gst_audio::AudioInfo::new(
+                let mut audio_info_builder = gst_audio::AudioInfo::builder(
                     gst_audio::AUDIO_FORMAT_F32,
                     options.sample_rate as u32,
                     channels,
@@ -311,12 +318,9 @@ impl AudioDecoder for GStreamerAudioDecoder {
 
             if let Err(e) = insert_deinterleave() {
                 callbacks.error(e);
-                let _ = sender.lock().unwrap().send(());
+                let _ = sender.send(());
             }
         });
-
-        appsrc.set_property_format(gst::Format::Bytes);
-        appsrc.set_property_block(true);
 
         let bus = match pipeline.get_bus() {
             Some(bus) => bus,
@@ -324,7 +328,7 @@ impl AudioDecoder for GStreamerAudioDecoder {
                 callbacks.error(AudioDecoderError::Backend(
                     "Pipeline without bus. Shouldn't happen!".to_owned(),
                 ));
-                let _ = sender.lock().unwrap().send(());
+                let _ = sender_.send(());
                 return;
             }
         };
@@ -338,42 +342,34 @@ impl AudioDecoder for GStreamerAudioDecoder {
                     callbacks_.error(AudioDecoderError::Backend(
                         e.get_debug().unwrap_or("Unknown".to_owned()),
                     ));
-                    let _ = sender.lock().unwrap().send(());
                 }
                 MessageView::Eos(_) => {
                     callbacks_.eos();
-                    let _ = sender.lock().unwrap().send(());
+                    let _ = sender_.send(());
                 }
                 _ => (),
             }
             gst::BusSyncReply::Drop
         });
 
-        if pipeline.set_state(gst::State::Playing).is_err() {
+        if pipeline.set_state(gst::State::Paused).is_err() {
             callbacks.error(AudioDecoderError::StateChangeFailed);
             return;
         }
-
-        let max_bytes = appsrc.get_max_bytes() as usize;
-        let data_len = data.len();
-        let mut reader = Cursor::new(data);
-        while (reader.position() as usize) < data_len {
-            let data_left = data_len - reader.position() as usize;
-            let buffer_size = if data_left < max_bytes {
-                data_left
-            } else {
-                max_bytes
-            };
-            let mut buffer = gst::Buffer::with_size(buffer_size).unwrap();
-            {
-                let buffer = buffer.get_mut().unwrap();
-                let mut map = buffer.map_writable().unwrap();
-                let mut buffer = map.as_mut_slice();
-                let _ = reader.read(&mut buffer);
-            }
-            let _ = appsrc.push_buffer(buffer);
+        if let Err(_) = pipeline.get_state(gst::ClockTime::none()).0 {
+            return callbacks.error(AudioDecoderError::Backend(
+                "Error retrieving pipeline state".to_owned(),
+            ));
         }
-        let _ = appsrc.end_of_stream();
+        if let Some(millis) = start_millis {
+            if let Err(e) = decodebin.seek_simple(
+                gst::SeekFlags::KEY_UNIT | gst::SeekFlags::FLUSH,
+                millis * gst::MSECOND,
+            ) {
+                return callbacks.error(AudioDecoderError::Backend(e.to_string()));
+            }
+        }
+        pipeline.set_state(gst::State::Playing).unwrap();
 
         // Wait until we get an error or EOS.
         receiver.recv().unwrap();

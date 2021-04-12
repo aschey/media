@@ -1,13 +1,18 @@
+use std::{collections::VecDeque, usize};
+
 use block::{Block, Chunk, Tick, FRAMES_PER_BLOCK};
 use node::{AudioNodeEngine, AudioScheduledSourceNodeMessage, BlockInfo, OnEndedCallback};
 use node::{AudioNodeType, ChannelInfo, ShouldPlay};
 use param::{Param, ParamType};
 
+const BUFFER_THRESHOLD: usize = 16384;
+
 /// Control messages directed to AudioBufferSourceNodes.
-#[derive(Debug, Clone)]
 pub enum AudioBufferSourceNodeMessage {
     /// Set the data block holding the audio sample data to be played.
     SetBuffer(Option<AudioBuffer>),
+    /// Push data onto the buffer. SetBuffer must be called first.
+    PushBuffer(Vec<VecDeque<f32>>),
     /// Set loop parameter.
     SetLoopEnabled(bool),
     /// Set loop parameter.
@@ -16,6 +21,8 @@ pub enum AudioBufferSourceNodeMessage {
     SetLoopStart(f64),
     /// Set start parameters (when, offset, duration).
     SetStartParams(f64, Option<f64>, Option<f64>),
+    // Callback invoked when the queue is running out of data
+    SetNeedDataCallback(Box<dyn Fn() + Send>),
 }
 
 /// This specifies options for constructing an AudioBufferSourceNode.
@@ -93,6 +100,7 @@ pub(crate) struct AudioBufferSourceNode {
     stop_at: Option<Tick>,
     /// The ended event callback.
     pub onended_callback: Option<OnEndedCallback>,
+    need_data_callback: Option<Box<dyn Fn() + Send>>,
 }
 
 impl AudioBufferSourceNode {
@@ -114,6 +122,7 @@ impl AudioBufferSourceNode {
             start_when: 0.,
             stop_at: None,
             onended_callback: None,
+            need_data_callback: None,
         }
     }
 
@@ -121,6 +130,11 @@ impl AudioBufferSourceNode {
         match message {
             AudioBufferSourceNodeMessage::SetBuffer(buffer) => {
                 self.buffer = buffer;
+            }
+            AudioBufferSourceNodeMessage::PushBuffer(buffer) => {
+                if let Some(cur_buf) = self.buffer.as_mut() {
+                    cur_buf.push(buffer);
+                }
             }
             // XXX(collares): To fully support dynamically updating loop bounds,
             // Must truncate self.buffer_pos if it is now outside the loop.
@@ -135,6 +149,9 @@ impl AudioBufferSourceNode {
                 self.start_when = when;
                 self.start_offset = offset;
                 self.start_duration = duration;
+            }
+            AudioBufferSourceNodeMessage::SetNeedDataCallback(callback) => {
+                self.need_data_callback = Some(callback);
             }
         }
     }
@@ -153,6 +170,9 @@ impl AudioNodeEngine for AudioBufferSourceNode {
         debug_assert!(inputs.len() == 0);
 
         if self.buffer.is_none() {
+            if let Some(callback) = &self.need_data_callback {
+                callback();
+            }
             inputs.blocks.push(Default::default());
             return inputs;
         }
@@ -165,7 +185,13 @@ impl AudioNodeEngine for AudioBufferSourceNode {
             ShouldPlay::Between(start, end) => (start.0 as usize, end.0 as usize),
         };
 
-        let buffer = self.buffer.as_ref().unwrap();
+        let buffer = self.buffer.as_mut().unwrap();
+
+        if buffer.remaining() < BUFFER_THRESHOLD {
+            if let Some(callback) = &self.need_data_callback {
+                callback();
+            }
+        }
 
         let (mut actual_loop_start, mut actual_loop_end) = (0., buffer.len() as f64);
         if self.loop_enabled {
@@ -262,13 +288,16 @@ impl AudioNodeEngine for AudioBufferSourceNode {
             && buffer_offset_per_tick == 1.
             && self.buffer_pos.trunc() == self.buffer_pos
             && self.buffer_pos + (FRAMES_PER_BLOCK.0 as f64) <= actual_loop_end
-            && FRAMES_PER_BLOCK.0 as f64 <= self.buffer_duration
+            && FRAMES_PER_BLOCK.0 as f64 <= buffer.remaining() as f64
         {
             let mut block = Block::empty();
-            let pos = self.buffer_pos as usize;
+            //let pos = self.buffer_pos as usize;
 
-            for chan in 0..buffer.chans() {
-                block.push_chan(&buffer.buffers[chan as usize][pos..(pos + frames_to_output)]);
+            // for chan in 0..buffer.chans() {
+            //     block.push_chan(&buffer.buffers[chan as usize][pos..(pos + frames_to_output)]);
+            // }
+            for chan in buffer.drain(frames_to_output) {
+                block.push_chan(&chan);
             }
 
             inputs.blocks.push(block);
@@ -305,9 +334,12 @@ impl AudioNodeEngine for AudioBufferSourceNode {
                         break;
                     }
 
-                    *sample = buffer.interpolate(chan, pos);
+                    *sample = buffer.interpolate(chan, pos - buffer.consumed as f64);
                     pos += buffer_offset_per_tick;
                     duration -= buffer_offset_per_tick.abs();
+                    if chan == buffer.chans() - 1 {
+                        buffer.drain(1);
+                    }
                 }
 
                 // This is the last channel, update parameters.
@@ -322,6 +354,7 @@ impl AudioNodeEngine for AudioBufferSourceNode {
 
         if !self.loop_enabled && (self.buffer_pos < 0. || self.buffer_pos >= buffer.len() as f64)
             || self.buffer_duration <= 0.
+            || (buffer.len() > 0 && buffer.remaining() <= 0)
         {
             self.maybe_trigger_onended_callback();
         }
@@ -346,38 +379,68 @@ impl AudioNodeEngine for AudioBufferSourceNode {
 #[derive(Debug, Clone)]
 pub struct AudioBuffer {
     /// Invariant: all buffers must be of the same length
-    pub buffers: Vec<Vec<f32>>,
+    pub buffers: Vec<VecDeque<f32>>,
     pub sample_rate: f32,
+    pub start_position: usize,
+    pub size: usize,
+    pub consumed: usize,
 }
 
 impl AudioBuffer {
     pub fn new(chan: u8, len: usize, sample_rate: f32) -> Self {
         assert!(chan > 0);
         let mut buffers = Vec::with_capacity(chan as usize);
-        let single = vec![0.; len];
+        let single = VecDeque::with_capacity(len);
         buffers.resize(chan as usize, single);
         AudioBuffer {
             buffers,
             sample_rate,
+            start_position: 0,
+            size: len,
+            consumed: 0,
         }
     }
 
-    pub fn from_buffers(buffers: Vec<Vec<f32>>, sample_rate: f32) -> Self {
+    pub fn from_buffers(buffers: Vec<VecDeque<f32>>, sample_rate: f32) -> Self {
         for buf in &buffers {
             assert_eq!(buf.len(), buffers[0].len())
         }
-
+        let size = buffers[0].len();
         Self {
             buffers,
             sample_rate,
+            start_position: 0,
+            size,
+            consumed: 0,
         }
     }
 
-    pub fn from_buffer(buffer: Vec<f32>, sample_rate: f32) -> Self {
+    pub fn from_buffer(buffer: VecDeque<f32>, sample_rate: f32) -> Self {
         AudioBuffer::from_buffers(vec![buffer], sample_rate)
     }
 
+    pub fn push(&mut self, buffers: Vec<VecDeque<f32>>) {
+        assert_eq!(self.buffers.len(), buffers.len());
+        self.size += buffers[0].len();
+
+        for (i, mut buf) in buffers.into_iter().enumerate() {
+            self.buffers[i].append(&mut buf);
+        }
+    }
+
+    pub fn drain(&mut self, count: usize) -> Vec<Vec<f32>> {
+        self.consumed += count;
+        self.buffers
+            .iter_mut()
+            .map(|b| b.drain(..count).collect::<Vec<_>>())
+            .collect::<Vec<_>>()
+    }
+
     pub fn len(&self) -> usize {
+        self.size
+    }
+
+    pub fn remaining(&self) -> usize {
         self.buffers[0].len()
     }
 
@@ -390,7 +453,7 @@ impl AudioBuffer {
     // https://ccrma.stanford.edu/~jos/resample/resample.pdf
     // There are Rust bindings: https://github.com/rust-av/speexdsp-rs
     pub fn interpolate(&self, chan: u8, pos: f64) -> f32 {
-        debug_assert!(pos >= 0. && pos < self.len() as f64);
+        debug_assert!(pos >= 0. && pos < self.remaining() as f64);
 
         let prev = pos.floor() as usize;
         let offset = pos - pos.floor();
@@ -410,9 +473,5 @@ impl AudioBuffer {
                 }
             }
         }
-    }
-
-    pub fn data_chan_mut(&mut self, chan: u8) -> &mut [f32] {
-        &mut self.buffers[chan as usize]
     }
 }

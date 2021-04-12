@@ -6,7 +6,7 @@ use servo_media::audio::buffer_source_node::{AudioBuffer, AudioBufferSourceNodeM
 use servo_media::audio::node::OnEndedCallback;
 use servo_media::audio::node::{AudioNodeInit, AudioNodeMessage, AudioScheduledSourceNodeMessage};
 use servo_media::{ClientContextId, ServoMedia};
-use std::sync::Arc;
+use std::{collections::VecDeque, iter::FromIterator, sync::Arc};
 use std::{thread, time};
 
 fn run_example(servo_media: Arc<ServoMedia>) {
@@ -31,7 +31,13 @@ fn run_example(servo_media: Arc<ServoMedia>) {
     context.message_node(
         buffer_source,
         AudioNodeMessage::AudioBufferSourceNode(AudioBufferSourceNodeMessage::SetBuffer(Some(
-            AudioBuffer::from_buffers(buffers, 44100.),
+            AudioBuffer::from_buffers(
+                buffers
+                    .into_iter()
+                    .map(|b| VecDeque::from_iter(b))
+                    .collect(),
+                44100.,
+            ),
         ))),
     );
     let callback = OnEndedCallback::new(|| {

@@ -112,6 +112,7 @@ pub mod android {
     }
 }
 
+#[cfg(target_os = "android")]
 #[test]
 fn it_works() {
     let backend_id = unsafe { CString::from_raw(servo_media_backend_id()) };

@@ -73,7 +73,7 @@ mod imp {
             }
         }
 
-        pub fn set_seek_offset<O: IsA<gst::Object>>(&self, parent: &O, offset: u64) -> bool {
+        pub fn set_seek_offset<O: IsA<glib::Object>>(&self, parent: &O, offset: u64) -> bool {
             let mut pos = self.position.lock().unwrap();
 
             if pos.offset == offset || pos.requested_offset != 0 {
@@ -106,7 +106,7 @@ mod imp {
             pos.requested_offset = 0;
         }
 
-        pub fn push_buffer<O: IsA<gst::Object>>(
+        pub fn push_buffer<O: IsA<glib::Object>>(
             &self,
             parent: &O,
             data: Vec<u8>,
@@ -255,22 +255,23 @@ mod imp {
 
         // Called once at the very beginning of instantiation of each instance and
         // creates the data structure that contains all our state
-        fn new_with_class(klass: &subclass::simple::ClassStruct<Self>) -> Self {
+        fn with_class(klass: &subclass::simple::ClassStruct<Self>) -> Self {
             let app_src = gst::ElementFactory::make("appsrc", None)
                 .map(|elem| elem.downcast::<gst_app::AppSrc>().unwrap())
                 .expect("Could not create appsrc element");
 
             let pad_templ = klass.get_pad_template("src").unwrap();
-            let ghost_pad =
-                gst::GhostPad::new_no_target_from_template(Some("src"), &pad_templ).unwrap();
+            let ghost_pad = gst::GhostPad::builder_with_template(&pad_templ, Some("src")).build();
 
-            ghost_pad.set_query_function(|pad, parent, query| {
-                ServoSrc::catch_panic_pad_function(
-                    parent,
-                    || false,
-                    |servosrc, element| servosrc.query(pad, element, query),
-                )
-            });
+            unsafe {
+                ghost_pad.set_query_function(|pad, parent, query| {
+                    ServoSrc::catch_panic_pad_function(
+                        parent,
+                        || false,
+                        |servosrc, element| servosrc.query(pad, element, query),
+                    )
+                });
+            }
 
             Self {
                 cat: gst::DebugCategory::new(

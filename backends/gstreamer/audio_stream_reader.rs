@@ -69,7 +69,7 @@ impl GStreamerAudioStreamReader {
             e.sync_state_with_parent().map_err(|e| e.to_string())?;
         }
         appsink.set_callbacks(
-            gst_app::AppSinkCallbacks::new()
+            gst_app::AppSinkCallbacks::builder()
                 .new_sample(move |appsink| {
                     let sample = appsink.pull_sample().map_err(|_| gst::FlowError::Eos)?;
                     let buffer = sample.get_buffer_owned().ok_or(gst::FlowError::Error)?;
